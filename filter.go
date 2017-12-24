@@ -30,7 +30,15 @@ var ErrTooFull = errors.New("cuckoo filter too full")
 // Filter is an implementation of a cuckoo filter.
 type Filter struct {
 	nBuckets uint32
+	stats    Stats
 	table    [][entriesPerBucket]uint16
+}
+
+type Stats struct {
+	indexed  int
+	deleted  int
+	matched  int
+	requests int
 }
 
 func nearestPowerOfTwo(val uint32) uint32 {
@@ -108,6 +116,7 @@ func (f *Filter) emptyPosition(idx uint32) int {
 // heavily loaded, ErrTooFull may be returned, which signifies that
 // the filter must be rebuilt with an increased maxKeys parameter.
 func (f *Filter) Add(d []byte) error {
+	f.stats.requests += 1
 	h := hash(d)
 
 	fp := f.fingerprint(uint32(h))
@@ -138,7 +147,7 @@ func (f *Filter) Add(d []byte) error {
 			return nil
 		}
 	}
-
+	f.stats.indexed += 1
 	return ErrTooFull
 }
 
@@ -146,12 +155,13 @@ func (f *Filter) Add(d []byte) error {
 // Cuckoo filters are probablistic data structures which can return
 // false positives.  False negatives are not possible.
 func (f *Filter) Contains(d []byte) bool {
+	f.stats.requests += 1
 	h := hash(d)
 
 	fp := f.fingerprint(uint32(h))
 	i1 := f.bucketIndex(uint32(h >> 32))
 	i2 := f.alternateIndex(i1, fp)
-
+	f.stats.contains += 1
 	return f.matchPosition(i1, fp) != -1 || f.matchPosition(i2, fp) != -1
 }
 
@@ -159,6 +169,7 @@ func (f *Filter) Contains(d []byte) bool {
 // it must have been previously inserted.  Deleting a non-inserted
 // item might unintentionally remove a real, different item.
 func (f *Filter) Delete(d []byte) bool {
+	f.stats.requests += 1
 	h := hash(d)
 
 	fp := f.fingerprint(uint32(h))
@@ -167,11 +178,13 @@ func (f *Filter) Delete(d []byte) bool {
 
 	if i := f.matchPosition(i1, fp); i != -1 {
 		f.table[i1][i] = 0
+		f.stats.deleted += 1
 		return true
 	}
 
 	if i := f.matchPosition(i2, fp); i != -1 {
 		f.table[i2][i] = 0
+		f.stats.deleted += 1
 		return true
 	}
 
